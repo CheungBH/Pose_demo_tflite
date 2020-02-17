@@ -72,7 +72,8 @@ enum class Device {
 
 class Net(
   val context: Context,
-  val filename: String = "posenet_model.tflite",
+//  val filename: String = "posenet_model.tflite",
+  val filename: String = "graph.tflite",
   val device: Device = Device.GPU
 ) : AutoCloseable {
   var lastInferenceTimeNanos: Long = -1
@@ -153,6 +154,7 @@ class Net(
     val outputMap = HashMap<Int, Any>()
 
     // 1 * 9 * 9 * 17 contains heatmaps
+    val tensor = interpreter.getOutputTensor(0)
     val heatmapsShape = interpreter.getOutputTensor(0).shape()
     outputMap[0] = Array(heatmapsShape[0]) {
       Array(heatmapsShape[1]) {
@@ -203,6 +205,9 @@ class Net(
       )
     )
 
+    val sb = getInterpreter()
+    val tensor = sb.getOutputTensor(0)
+    val shape = tensor.shape()
     val outputMap = initOutputMap(getInterpreter())
 
     val inferenceStartTimeNanos = SystemClock.elapsedRealtimeNanos()
