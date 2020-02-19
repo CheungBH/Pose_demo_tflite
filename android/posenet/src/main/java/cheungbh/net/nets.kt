@@ -73,7 +73,7 @@ enum class Device {
 class Net(
   val context: Context,
 //  val filename: String = "posenet_model.tflite",
-  val filename: String = "graph.tflite",
+  val filename: String = "medium_fast.tflite",
   val device: Device = Device.GPU
 ) : AutoCloseable {
   var lastInferenceTimeNanos: Long = -1
