@@ -29,11 +29,7 @@ import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.GpuDelegate
 
 enum class BodyPart {
-  NOSE,
-  LEFT_EYE,
-  RIGHT_EYE,
-  LEFT_EAR,
-  RIGHT_EAR,
+  HEAD,
   LEFT_SHOULDER,
   RIGHT_SHOULDER,
   LEFT_ELBOW,
@@ -54,7 +50,7 @@ class Position {
 }
 
 class KeyPoint {
-  var bodyPart: BodyPart = BodyPart.NOSE
+  var bodyPart: BodyPart = BodyPart.HEAD
   var position: Position = Position()
   var score: Float = 0.0f
 }
@@ -154,33 +150,11 @@ class Net(
     val outputMap = HashMap<Int, Any>()
 
     // 1 * 9 * 9 * 17 contains heatmaps
-    val tensor = interpreter.getOutputTensor(0)
+//    val tensor = interpreter.getOutputTensor(0)
     val heatmapsShape = interpreter.getOutputTensor(0).shape()
     outputMap[0] = Array(heatmapsShape[0]) {
       Array(heatmapsShape[1]) {
         Array(heatmapsShape[2]) { FloatArray(heatmapsShape[3]) }
-      }
-    }
-
-    // 1 * 9 * 9 * 34 contains offsets
-    val offsetsShape = interpreter.getOutputTensor(1).shape()
-    outputMap[1] = Array(offsetsShape[0]) {
-      Array(offsetsShape[1]) { Array(offsetsShape[2]) { FloatArray(offsetsShape[3]) } }
-    }
-
-    // 1 * 9 * 9 * 32 contains forward displacements
-    val displacementsFwdShape = interpreter.getOutputTensor(2).shape()
-    outputMap[2] = Array(offsetsShape[0]) {
-      Array(displacementsFwdShape[1]) {
-        Array(displacementsFwdShape[2]) { FloatArray(displacementsFwdShape[3]) }
-      }
-    }
-
-    // 1 * 9 * 9 * 32 contains backward displacements
-    val displacementsBwdShape = interpreter.getOutputTensor(3).shape()
-    outputMap[3] = Array(displacementsBwdShape[0]) {
-      Array(displacementsBwdShape[1]) {
-        Array(displacementsBwdShape[2]) { FloatArray(displacementsBwdShape[3]) }
       }
     }
 
@@ -207,7 +181,7 @@ class Net(
 
     val sb = getInterpreter()
     val tensor = sb.getOutputTensor(0)
-    val shape = tensor.shape()
+//    val shape = tensor.shape()
     val outputMap = initOutputMap(getInterpreter())
 
     val inferenceStartTimeNanos = SystemClock.elapsedRealtimeNanos()
@@ -218,30 +192,35 @@ class Net(
       String.format("Interpreter took %.2f ms", 1.0f * lastInferenceTimeNanos / 1_000_000)
     )
 
-    val heatmaps = outputMap[0] as Array<Array<Array<FloatArray>>>
-    val offsets = outputMap[1] as Array<Array<Array<FloatArray>>>
+    val hmoffset = outputMap[0] as Array<Array<Array<FloatArray>>>
 
-    val height = heatmaps[0].size
-    val width = heatmaps[0][0].size
-    val numKeypoints = heatmaps[0][0][0].size
-
+    val height = hmoffset[0].size
+    val width = hmoffset[0][0].size
+    val numKeypoints = 13 //(hmoffset[0][0][0].size) // (1,10,10,39) --> 39/3 --> 13
     // Finds the (row, col) locations of where the keypoints are most likely to be.
     val keypointPositions = Array(numKeypoints) { Pair(0, 0) }
-    for (keypoint in 0 until numKeypoints) {
-      var maxVal = heatmaps[0][0][0][keypoint]
+    val keypointOffset = Array(numKeypoints) { Pair(0, 0) }
+    for (keypoint in 0 until 13) {
+      var maxVal = hmoffset[0][0][0][keypoint]
       var maxRow = 0
       var maxCol = 0
+      var xOffset = 0
+      var yOffset = 0
       for (row in 0 until height) {
         for (col in 0 until width) {
-          heatmaps[0][row][col][keypoint] = heatmaps[0][row][col][keypoint]
-          if (heatmaps[0][row][col][keypoint] > maxVal) {
-            maxVal = heatmaps[0][row][col][keypoint]
+          hmoffset[0][row][col][keypoint] = hmoffset[0][row][col][keypoint]
+          if (hmoffset[0][row][col][keypoint] > maxVal) {
+            maxVal = hmoffset[0][row][col][keypoint]
             maxRow = row
             maxCol = col
+            xOffset = hmoffset[0][row][col][keypoint+13].toInt()
+            yOffset = hmoffset[0][row][col][keypoint+26].toInt()
+
           }
         }
       }
       keypointPositions[keypoint] = Pair(maxRow, maxCol)
+      keypointOffset[keypoint] = Pair(xOffset,yOffset )
     }
 
     // Calculating the x and y coordinates of the keypoints with offset adjustment.
@@ -249,18 +228,23 @@ class Net(
     val yCoords = IntArray(numKeypoints)
     val confidenceScores = FloatArray(numKeypoints)
     keypointPositions.forEachIndexed { idx, position ->
-      val positionY = keypointPositions[idx].first
-      val positionX = keypointPositions[idx].second
-      yCoords[idx] = (
-        position.first / (height - 1).toFloat() * bitmap.height +
-          offsets[0][positionY][positionX][idx]
-        ).toInt()
-      xCoords[idx] = (
-        position.second / (width - 1).toFloat() * bitmap.width +
-          offsets[0][positionY]
-          [positionX][idx + numKeypoints]
-        ).toInt()
-      confidenceScores[idx] = sigmoid(heatmaps[0][positionY][positionX][idx])
+      val positionX = keypointPositions[idx].first
+      val positionY = keypointPositions[idx].second
+      val offsetX =  keypointOffset[idx].first
+      val offsetY =  keypointOffset[idx].second
+//      yCoords[idx] = (
+//        position.first / (height - 1).toFloat() * bitmap.height +
+//          offsets[0][positionY][positionX][idx]
+//        ).toInt()
+      yCoords[idx] = ((position.first / (height - 1).toFloat() * bitmap.height) + offsetY).toInt()
+//      xCoords[idx] = (
+//        position.second / (width - 1).toFloat() * bitmap.width +
+//          offsets[0][positionY]
+//          [positionX][idx + numKeypoints]
+//        ).toInt()
+      xCoords[idx] = ((position.second / (width - 1).toFloat() * bitmap.width) + offsetX).toInt()
+      //      confidenceScores[idx] = sigmoid(heatmaps[0][positionY][positionX][idx])
+        confidenceScores[idx] = sigmoid(hmoffset[0][positionX][positionY][idx])
     }
 
     val person = Person()
